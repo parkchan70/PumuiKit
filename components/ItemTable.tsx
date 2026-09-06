@@ -6,22 +6,33 @@ import { comma, toNumber } from "@/lib/format";
 
 type Props = {
   items: Item[];
-  onChange: (items: Item[]) => void;
+  /**
+   * 항상 직전 값을 기준으로 고치기 위해 setState 를 그대로 받습니다.
+   * (+ 를 연달아 누르면 한 번의 렌더 안에서 여러 번 처리되는데,
+   *  props 의 items 를 붙잡고 계산하면 마지막 한 번만 반영됩니다.)
+   */
+  onChange: React.Dispatch<React.SetStateAction<Item[]>>;
 };
 
 export default function ItemTable({ items, onChange }: Props) {
   const patch = (id: string, changes: Partial<Item>) =>
-    onChange(items.map((it) => (it.id === id ? { ...it, ...changes } : it)));
+    onChange((prev) => prev.map((it) => (it.id === id ? { ...it, ...changes } : it)));
 
-  const remove = (id: string) => onChange(items.filter((it) => it.id !== id));
+  const bumpQty = (id: string, delta: number) =>
+    onChange((prev) =>
+      prev.map((it) => (it.id === id ? { ...it, qty: Math.max(1, it.qty + delta) } : it)),
+    );
 
-  const move = (index: number, delta: number) => {
-    const target = index + delta;
-    if (target < 0 || target >= items.length) return;
-    const next = [...items];
-    [next[index], next[target]] = [next[target], next[index]];
-    onChange(next);
-  };
+  const remove = (id: string) => onChange((prev) => prev.filter((it) => it.id !== id));
+
+  const move = (index: number, delta: number) =>
+    onChange((prev) => {
+      const target = index + delta;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
 
   const total = totalOf(items);
   const totalQty = items.reduce((sum, it) => sum + it.qty, 0);
@@ -36,7 +47,7 @@ export default function ItemTable({ items, onChange }: Props) {
               <th className="min-w-[13rem] text-left">내용</th>
               <th className="min-w-[7rem]">규격</th>
               <th className="w-16">단위</th>
-              <th className="w-20">수량</th>
+              <th className="w-28">수량</th>
               <th className="w-28">예상단가</th>
               <th className="w-28">예상금액</th>
               <th className="w-16"> </th>
@@ -76,10 +87,23 @@ export default function ItemTable({ items, onChange }: Props) {
                   />
                 </td>
                 <td>
-                  <NumberCell
-                    value={item.qty}
-                    onCommit={(v) => patch(item.id, { qty: Math.max(1, v) })}
-                  />
+                  <div className="flex items-center justify-center gap-0.5">
+                    <StepButton
+                      label="수량 줄이기"
+                      onClick={() => bumpQty(item.id, -1)}
+                      disabled={item.qty <= 1}
+                    >
+                      −
+                    </StepButton>
+                    <NumberCell
+                      value={item.qty}
+                      onCommit={(v) => patch(item.id, { qty: Math.max(1, v) })}
+                      className="w-10 text-center"
+                    />
+                    <StepButton label="수량 늘리기" onClick={() => bumpQty(item.id, 1)}>
+                      +
+                    </StepButton>
+                  </div>
                 </td>
                 <td>
                   <NumberCell
@@ -142,11 +166,19 @@ export default function ItemTable({ items, onChange }: Props) {
   );
 }
 
-function NumberCell({ value, onCommit }: { value: number; onCommit: (value: number) => void }) {
+function NumberCell({
+  value,
+  onCommit,
+  className = "text-right",
+}: {
+  value: number;
+  onCommit: (value: number) => void;
+  className?: string;
+}) {
   const [draft, setDraft] = useState<string | null>(null);
   return (
     <input
-      className="cell-input text-right tabular-nums"
+      className={`cell-input tabular-nums ${className}`}
       inputMode="numeric"
       value={draft ?? comma(value)}
       onFocus={() => setDraft(String(value))}
@@ -159,6 +191,33 @@ function NumberCell({ value, onCommit }: { value: number; onCommit: (value: numb
         if (e.key === "Enter") e.currentTarget.blur();
       }}
     />
+  );
+}
+
+/** 수량 옆의 − / + 단추 */
+function StepButton({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      className="grid h-5 w-5 shrink-0 place-items-center rounded border text-xs leading-none disabled:opacity-30"
+      style={{ borderColor: "var(--line-strong)" }}
+    >
+      {children}
+    </button>
   );
 }
 

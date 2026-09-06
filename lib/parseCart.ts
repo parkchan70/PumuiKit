@@ -29,21 +29,46 @@ const NOISE_ANYWHERE =
 const PRICE_G =
   /(?:₩\s*(\d{1,3}(?:,\d{3})*|\d+)|(\d{1,3}(?:,\d{3})+|\d+)\s*원|(\d{1,3}(?:,\d{3})+)(?!\s*(?:ml|mL|g|kg|cc|mm|cm|km|매|장|권|개|세트|셋트|박스|팩)))/g;
 
+/**
+ * 쇼핑몰 광고·배송 안내 줄. 어느 위치에 있든 그 줄을 통째로 버립니다.
+ * ("9월 22일까지 한가위 빅세일 쿠폰으로 구매하세요!" 처럼 상품명보다 긴 문구가
+ *  상품명 자리를 빼앗기 때문에, 줄 첫머리만 보는 NOISE 로는 부족합니다.)
+ */
+const PROMO =
+  /(쿠폰|빅\s*세일|결제\s*할인|즉시\s*할인|추가\s*할인|카드\s*할인|적립|도착\s*보장|배송\s*보장|스타\s*배송|로켓\s*배송|무료\s*배송|배송비|저렴해졌|가격\s*인하|구매하세요|적용해보세요|담아보세요|품절|재입고|와우\s*회원|한정\s*수량|남았어요)/;
+
 const QTY_LABELLED = /(?:수량|주문\s*수량|구매\s*수량|주문량)\s*[:：]?\s*(\d{1,4})/;
-const QTY_UNIT =
-  /(\d{1,4})\s*(개|EA|ea|Ea|세트|셋트|박스|팩|권|매|장|병|캔|통|봉|자루|다스|묶음|롤|벌|족|쌍|대)(?![가-힣])/;
+
+/** 가격 옆에 붙는 "× 3" — "10,000원 x 3개" */
 const QTY_MULT = /[x×X]\s*(\d{1,4})\b/;
 
 const OPTION_LINE =
   /^(\[?옵션\]?|옵션명|선택\s*옵션|색상|컬러|사이즈|규격|종류|타입|수량선택|구성)\s*[:：]?\s*(.+)$/;
 
-/** 그 줄 전체가 수량 표시일 때만 — "네오디움 자석 2개" 같은 상품명은 걸리지 않습니다. */
-const QTY_ONLY =
-  /^(?:[x×X]\s*\d{1,4}|\d{1,4}\s*(?:개|EA|ea|Ea|세트|셋트|박스|팩|권|매|장|병|캔|통|봉|자루|다스|묶음|롤|벌|족|쌍|대))$/;
+const QTY_UNITS = "개|EA|ea|Ea|세트|셋트|박스|팩|권|매|장|병|캔|통|봉|자루|다스|묶음|롤|벌|족|쌍|대";
+
+/**
+ * 줄 **전체**가 수량 표시일 때만 그 숫자를 돌려줍니다.
+ *
+ * 장바구니의 수량 조절 칸은 "− 1 +" 또는 "1" 한 줄로 복사됩니다.
+ * 반대로 상품명 안의 "30롤" · "2팩" · "202.5g x 3개" 는 규격이지 주문 수량이 아니므로,
+ * 줄 일부만 맞는 경우는 절대 수량으로 보지 않습니다.
+ */
+function quantityOnly(line: string): number | null {
+  const compact = line
+    .replace(/\s+/g, "")
+    .replace(/^[-−–—+]+/, "")
+    .replace(/[-−–—+]+$/, "");
+  if (!compact) return null;
+  const m = compact.match(new RegExp(`^(?:[x×X](\\d{1,4})|(\\d{1,4})(?:${QTY_UNITS})?)$`));
+  if (!m) return null;
+  const n = Number(m[1] ?? m[2]);
+  return Number.isFinite(n) && n > 0 && n <= 9999 ? n : null;
+}
 
 /** 품목의 이름이 될 수 없는 줄 — 수량·옵션 표시 */
 function isMeta(line: string): boolean {
-  return OPTION_LINE.test(line) || QTY_LABELLED.test(line) || QTY_ONLY.test(line.replace(/\s+/g, ""));
+  return OPTION_LINE.test(line) || QTY_LABELLED.test(line) || quantityOnly(line) !== null;
 }
 
 /**
@@ -99,7 +124,8 @@ export function parseCartText(raw: string, options: ParseOptions = {}): ParseRes
     .replace(/ /g, " ")  // 줄바꿈 없는 공백(NBSP)
     .replace(/[ \t]+$/gm, "");
 
-  let lines = text.split("\n");
+  // 광고 문구는 붙여넣기·캡쳐 어느 쪽이든 먼저 걷어냅니다.
+  let lines = text.split("\n").filter((line) => !PROMO.test(line));
 
   if (options.ocr) {
     lines = lines
@@ -318,7 +344,11 @@ function blockToItem(block: string[]): ExtractedItem | null {
   const prices: number[] = [];
   const nameCandidates: string[] = [];
   const specParts: string[] = [];
-  let qty = 0;
+
+  // 수량은 출처에 따라 믿음의 정도가 다릅니다. 아래 순서로 채택합니다.
+  let labelledQty = 0; // "수량 3개"
+  let multQty = 0; // "10,000원 × 3"
+  let steppedQty = 0; // 장바구니 수량 칸이 "− 1 +" / "1" 한 줄로 복사된 경우
 
   for (const line of block) {
     const found = pricesIn(line);
@@ -331,15 +361,15 @@ function blockToItem(block: string[]): ExtractedItem | null {
     }
 
     const labelled = line.match(QTY_LABELLED);
-    if (labelled) qty = Math.max(qty, Number(labelled[1]));
-    else {
-      const unitQty = line.match(QTY_UNIT);
-      // "10개입" 처럼 뒤에 '입'이 붙으면 수량이 아니라 규격입니다.
-      if (unitQty && !line.slice(unitQty.index! + unitQty[0].length).startsWith("입")) {
-        qty = Math.max(qty, Number(unitQty[1]));
-      }
+    if (labelled) {
+      labelledQty = Math.max(labelledQty, Number(labelled[1]));
+    } else if (found.length > 0) {
       const mult = line.match(QTY_MULT);
-      if (mult) qty = Math.max(qty, Number(mult[1]));
+      if (mult) multQty = Math.max(multQty, Number(mult[1]));
+    } else {
+      // 줄 전체가 수량일 때만. 상품명 안의 "30롤"·"2팩"·"x 3개"는 규격이므로 건드리지 않습니다.
+      const only = quantityOnly(line);
+      if (only !== null && steppedQty === 0) steppedQty = only;
     }
 
     if (found.length === 0 && !isMeta(line) && /[가-힣A-Za-z]/.test(line) && line.length >= 2) {
@@ -352,7 +382,7 @@ function blockToItem(block: string[]): ExtractedItem | null {
   const name = pickName(nameCandidates);
   if (!name) return null;
 
-  if (qty === 0) qty = 1;
+  const qty = labelledQty || multQty || steppedQty || 1;
   const unitPrice = pickUnitPrice(prices, qty);
   if (!unitPrice) return null;
 
