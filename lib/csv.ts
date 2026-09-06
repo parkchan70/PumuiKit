@@ -8,7 +8,8 @@ function escapeCell(value: string): string {
   return value;
 }
 
-export function itemsToCsv(items: Item[], withTotal = true): string {
+/** 품목 행만 내보냅니다. 합계 행은 넣지 않습니다(품의서식과 동일). */
+export function itemsToCsv(items: Item[]): string {
   const rows: string[] = [CSV_HEADERS.join(",")];
   for (const it of items) {
     rows.push(
@@ -21,10 +22,6 @@ export function itemsToCsv(items: Item[], withTotal = true): string {
         String(amountOf(it)),
       ].join(","),
     );
-  }
-  if (withTotal && items.length > 0) {
-    const total = items.reduce((s, it) => s + amountOf(it), 0);
-    rows.push(["합계", "", "", "", "", String(total)].join(","));
   }
   // 엑셀이 UTF-8 로 열도록 BOM 을 붙입니다.
   return "﻿" + rows.join("\r\n") + "\r\n";

@@ -28,7 +28,6 @@ export default function Page() {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [includeUnit, setIncludeUnit] = useState(false);
-  const [includeTotal, setIncludeTotal] = useState(true);
   const csvInput = useRef<HTMLInputElement>(null);
 
   const total = useMemo(() => totalOf(items), [items]);
@@ -131,7 +130,7 @@ export default function Page() {
   const baseName = () => (title.trim() ? sanitizeName(title) : "품의_품목내역");
 
   const downloadCsv = () => {
-    const blob = new Blob([itemsToCsv(items, includeTotal)], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob([itemsToCsv(items)], { type: "text/csv;charset=utf-8" });
     triggerDownload(blob, `${baseName()}_${todayStamp()}.csv`);
   };
 
@@ -140,7 +139,7 @@ export default function Page() {
     setLoading(true);
     setBusyLabel("엑셀 파일을 만드는 중…");
     try {
-      const blob = await buildXlsx(items, { includeUnit, includeTotal });
+      const blob = await buildXlsx(items, { includeUnit });
       triggerDownload(blob, `${baseName()}_${todayStamp()}.xlsx`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "엑셀 파일을 만들지 못했습니다.");
@@ -276,14 +275,9 @@ export default function Page() {
               />
               엑셀에 <b>단위</b> 열 포함
             </label>
-            <label className="flex items-center gap-1.5 text-xs">
-              <input
-                type="checkbox"
-                checked={includeTotal}
-                onChange={(e) => setIncludeTotal(e.target.checked)}
-              />
-              합계 행 붙이기
-            </label>
+            <span className="text-xs" style={{ color: "var(--muted)" }}>
+              내려받는 파일에는 품목 행만 들어갑니다 (합계 행 없음)
+            </span>
 
             <div className="ml-auto flex gap-2">
               <button

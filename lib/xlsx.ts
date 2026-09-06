@@ -1,5 +1,5 @@
 import type ExcelJSType from "exceljs";
-import { amountOf, type Item } from "./types";
+import type { Item } from "./types";
 
 /**
  * 사용자가 준 "품의서식참고.xls" 를 그대로 재현합니다. 전부 브라우저에서 만듭니다.
@@ -28,8 +28,6 @@ const WIDTH_PADDING = 0.69921875;
 export type XlsxOptions = {
   /** 참고 서식에 없는 "단위" 열을 함께 내보낼지 */
   includeUnit?: boolean;
-  /** 마지막에 합계 행을 붙일지 */
-  includeTotal?: boolean;
 };
 
 export async function buildXlsx(items: Item[], options: XlsxOptions = {}): Promise<Blob> {
@@ -37,7 +35,6 @@ export async function buildXlsx(items: Item[], options: XlsxOptions = {}): Promi
   if (rows.length === 0) throw new Error("내보낼 품목이 없습니다.");
 
   const includeUnit = Boolean(options.includeUnit);
-  const includeTotal = options.includeTotal !== false;
 
   const ExcelJS = (await import("exceljs")).default;
 
@@ -74,9 +71,7 @@ export async function buildXlsx(items: Item[], options: XlsxOptions = {}): Promi
 
   const qtyCol = includeUnit ? "D" : "C";
   const priceCol = includeUnit ? "E" : "D";
-  const lastCol = includeUnit ? "F" : "E";
   const colCount = headers.length;
-  const firstDataRow = 2;
 
   for (const item of rows) {
     const values = includeUnit
@@ -97,24 +92,8 @@ export async function buildXlsx(items: Item[], options: XlsxOptions = {}): Promi
     }
   }
 
-  const lastDataRow = sheet.rowCount;
-
-  if (includeTotal) {
-    const totalRow = sheet.addRow([]);
-    totalRow.height = ROW_HEIGHT;
-    totalRow.getCell(1).value = "합계";
-    sheet.mergeCells(totalRow.number, 1, totalRow.number, colCount - 1);
-    totalRow.getCell(colCount).value = {
-      formula: `SUM(${lastCol}${firstDataRow}:${lastCol}${lastDataRow})`,
-      date1904: false,
-    };
-    for (let c = 1; c <= colCount; c++) {
-      const cell = totalRow.getCell(c);
-      cell.font = { ...FONT_BODY, bold: true };
-      cell.alignment = { ...CENTER };
-      cell.border = { ...THIN };
-    }
-  }
+  // 합계 행은 넣지 않습니다. 참고 서식에도 없고, 품의서 본문에서 따로 잡는 값입니다.
+  // (화면 표에는 그대로 보입니다.)
 
   // 머리글은 인쇄할 때마다 반복
   sheet.pageSetup.printTitlesRow = "1:1";
@@ -123,9 +102,4 @@ export async function buildXlsx(items: Item[], options: XlsxOptions = {}): Promi
   return new Blob([buffer as ArrayBuffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
-}
-
-/** 표에 보이는 합계와 엑셀의 =SUM 결과가 같은지 확인할 때 씁니다. */
-export function totalForCheck(items: Item[]): number {
-  return items.reduce((sum, it) => sum + amountOf(it), 0);
 }
