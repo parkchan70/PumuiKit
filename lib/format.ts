@@ -17,9 +17,3 @@ export function todayStamp(): string {
   const p = (v: number) => String(v).padStart(2, "0");
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
 }
-
-/** 한글 파일명을 Content-Disposition 에 안전하게 싣기 위한 인코딩 */
-export function contentDisposition(filename: string): string {
-  const ascii = filename.replace(/[^\x20-\x7e]/g, "_");
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
-}

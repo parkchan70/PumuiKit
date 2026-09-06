@@ -2,19 +2,23 @@
   "name": "pumui-kit",
   "version": "0.1.0",
   "private": true,
-  "description": "장바구니 캡쳐·PDF·텍스트에서 품목을 뽑아 품의서식 엑셀/CSV로 만들어주는 도구",
+  "description": "장바구니 붙여넣기·캡쳐 이미지에서 품목을 뽑아 품의서식 엑셀/CSV로 만드는 도구 (서버·API 없이 브라우저에서만 동작)",
   "scripts": {
+    "setup:ocr": "node scripts/setup-ocr.mjs",
+    "postinstall": "node scripts/setup-ocr.mjs",
+    "predev": "node scripts/setup-ocr.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/setup-ocr.mjs",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.124.0",
     "exceljs": "^4.4.0",
     "next": "^16.3.4",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.13",

@@ -1,45 +1,38 @@
 import { newId, type Attachment } from "./types";
 
-/** Claude 가 보기 좋은 최대 변, 그리고 서버로 보낼 때의 용량을 함께 잡아줍니다. */
-const MAX_EDGE = 1568;
-const JPEG_QUALITY = 0.85;
-
-export const MAX_TOTAL_BYTES = 3.5 * 1024 * 1024; // Vercel 요청 본문 여유분
+/**
+ * OCR는 글자가 클수록 잘 읽습니다. 화면 캡쳐는 대개 작으므로 줄이지 않고 키웁니다.
+ * 너무 키우면 인식이 느려지므로 위아래로 한계를 둡니다.
+ */
+const OCR_MIN_EDGE = 1600;
+const OCR_MAX_EDGE = 2600;
 
 export function isSupported(file: File): boolean {
-  return file.type.startsWith("image/") || file.type === "application/pdf";
+  return file.type.startsWith("image/");
 }
 
 export async function fileToAttachment(file: File): Promise<Attachment> {
-  if (file.type === "application/pdf") {
-    const data = await fileToBase64(file);
-    return {
-      id: newId(),
-      name: file.name,
-      mediaType: "application/pdf",
-      data,
-      bytes: file.size,
-    };
+  if (!isSupported(file)) {
+    throw new Error(`${file.name || "파일"}: 이미지 파일만 올릴 수 있습니다.`);
   }
-
-  if (!file.type.startsWith("image/")) {
-    throw new Error(`${file.name}: 이미지 또는 PDF만 올릴 수 있습니다.`);
-  }
-
-  const { base64, blob } = await downscaleImage(file);
   return {
     id: newId(),
-    name: file.name || "캡쳐.jpg",
-    mediaType: "image/jpeg",
-    data: base64,
-    previewUrl: URL.createObjectURL(blob),
-    bytes: blob.size,
+    name: file.name || "캡쳐.png",
+    blob: file,
+    previewUrl: URL.createObjectURL(file),
+    bytes: file.size,
   };
 }
 
-async function downscaleImage(file: File): Promise<{ base64: string; blob: Blob }> {
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+/** 캡쳐를 흑백으로 바꾸고 글자 크기를 키워 OCR 정확도를 올립니다. */
+export async function prepareForOcr(source: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(source);
+  const longest = Math.max(bitmap.width, bitmap.height);
+
+  let scale = 1;
+  if (longest < OCR_MIN_EDGE) scale = Math.min(3, OCR_MIN_EDGE / longest);
+  else if (longest > OCR_MAX_EDGE) scale = OCR_MAX_EDGE / longest;
+
   const width = Math.max(1, Math.round(bitmap.width * scale));
   const height = Math.max(1, Math.round(bitmap.height * scale));
 
@@ -48,35 +41,22 @@ async function downscaleImage(file: File): Promise<{ base64: string; blob: Blob 
   canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("이미지를 처리할 수 없습니다.");
-  // 스크린샷 배경이 투명일 때 검게 나오지 않도록 흰 바탕을 깝니다.
+
+  // 투명 배경(잘라낸 캡쳐)이 검게 나오지 않도록 흰 바탕을 먼저 깝니다.
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, width, height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.filter = "grayscale(1) contrast(1.2)";
   ctx.drawImage(bitmap, 0, 0, width, height);
   bitmap.close?.();
 
-  const blob = await new Promise<Blob>((resolve, reject) => {
+  return new Promise<Blob>((resolve, reject) => {
+    // OCR에는 손실 없는 PNG가 유리합니다.
     canvas.toBlob(
-      (b) => (b ? resolve(b) : reject(new Error("이미지 변환에 실패했습니다."))),
-      "image/jpeg",
-      JPEG_QUALITY,
+      (blob) => (blob ? resolve(blob) : reject(new Error("이미지 변환에 실패했습니다."))),
+      "image/png",
     );
-  });
-  return { base64: await blobToBase64(blob), blob };
-}
-
-function fileToBase64(file: Blob): Promise<string> {
-  return blobToBase64(file);
-}
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("파일을 읽지 못했습니다."));
-    reader.onload = () => {
-      const result = String(reader.result);
-      resolve(result.slice(result.indexOf(",") + 1));
-    };
-    reader.readAsDataURL(blob);
   });
 }
 

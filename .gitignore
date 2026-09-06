@@ -16,3 +16,9 @@ build
 *.tsbuildinfo
 next-env.d.ts
 tsconfig.tsbuildinfo
+
+# tesseract.js 워커·WASM (npm install / build 때 node_modules 에서 복사됨)
+/public/tesseract/
+
+# tesseract.js 가 node 에서 캐시하는 언어 데이터
+/*.traineddata

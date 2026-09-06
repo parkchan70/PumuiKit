@@ -1,8 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // exceljs is a CommonJS package with node built-ins; keep it out of the bundler.
-  serverExternalPackages: ["exceljs"],
+  // 서버 코드가 없는 앱입니다. 붙여넣기 파싱·OCR·엑셀 생성 모두 브라우저에서 돌아갑니다.
 };
 
 export default nextConfig;

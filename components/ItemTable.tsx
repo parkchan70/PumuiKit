@@ -134,7 +134,7 @@ export default function ItemTable({ items, onChange }: Props) {
           >
             아직 품목이 없습니다.
             <br />
-            왼쪽에 장바구니를 붙여넣거나 캡쳐·PDF를 올린 뒤 <b>표로 정리하기</b>를 눌러 주세요.
+            왼쪽에 장바구니를 붙여넣거나 캡쳐 이미지를 올린 뒤 <b>표로 정리하기</b>를 눌러 주세요.
           </p>
         )}
       </div>

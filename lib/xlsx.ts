@@ -1,37 +1,22 @@
-import ExcelJS from "exceljs";
-import { NextResponse } from "next/server";
-import { contentDisposition, todayStamp } from "@/lib/format";
-
-export const runtime = "nodejs";
+import type ExcelJSType from "exceljs";
+import { amountOf, type Item } from "./types";
 
 /**
- * 사용자가 준 "품의서식참고.xls" 를 그대로 재현합니다.
+ * 사용자가 준 "품의서식참고.xls" 를 그대로 재현합니다. 전부 브라우저에서 만듭니다.
  *   A 내용(32) / B 규격(12.5) / C 수량(6.3) / D 예상단가(10.4) / E 예상금액(10.5)
  *   머리글 굴림 9pt · 회색(C0C0C0) 채움, 본문 굴림 10pt, 전 셀 가운데 정렬 · 실선 테두리
  *   행 높이 17.4pt, 예상금액은 =수량*단가 수식, A4 세로 (여백 0.7" / 0.75")
  */
 
-type Row = { name?: string; spec?: string; unit?: string; qty?: number; unitPrice?: number };
-
-type Body = {
-  items?: Row[];
-  /** 참고 서식에 없는 "단위" 열을 함께 내보낼지 */
-  includeUnit?: boolean;
-  /** 마지막에 합계 행을 붙일지 */
-  includeTotal?: boolean;
-  /** 파일 이름에만 쓰입니다 */
-  title?: string;
-};
-
 const FONT_BODY = { name: "굴림", size: 10 } as const;
 const FONT_HEAD = { name: "굴림", size: 9 } as const;
-const THIN: Partial<ExcelJS.Borders> = {
+const THIN: Partial<ExcelJSType.Borders> = {
   top: { style: "thin" },
   left: { style: "thin" },
   bottom: { style: "thin" },
   right: { style: "thin" },
 };
-const CENTER: Partial<ExcelJS.Alignment> = { horizontal: "center", vertical: "middle" };
+const CENTER: Partial<ExcelJSType.Alignment> = { horizontal: "center", vertical: "middle" };
 const ROW_HEIGHT = 17.4;
 
 /**
@@ -40,21 +25,21 @@ const ROW_HEIGHT = 17.4;
  */
 const WIDTH_PADDING = 0.69921875;
 
-export async function POST(request: Request) {
-  let body: Body;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "요청을 읽지 못했습니다." }, { status: 400 });
-  }
+export type XlsxOptions = {
+  /** 참고 서식에 없는 "단위" 열을 함께 내보낼지 */
+  includeUnit?: boolean;
+  /** 마지막에 합계 행을 붙일지 */
+  includeTotal?: boolean;
+};
 
-  const items = (body.items ?? []).filter((it) => (it.name ?? "").trim().length > 0);
-  if (items.length === 0) {
-    return NextResponse.json({ error: "내보낼 품목이 없습니다." }, { status: 400 });
-  }
+export async function buildXlsx(items: Item[], options: XlsxOptions = {}): Promise<Blob> {
+  const rows = items.filter((it) => it.name.trim().length > 0);
+  if (rows.length === 0) throw new Error("내보낼 품목이 없습니다.");
 
-  const includeUnit = Boolean(body.includeUnit);
-  const includeTotal = body.includeTotal !== false;
+  const includeUnit = Boolean(options.includeUnit);
+  const includeTotal = options.includeTotal !== false;
+
+  const ExcelJS = (await import("exceljs")).default;
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "PumuiKit";
@@ -74,9 +59,7 @@ export async function POST(request: Request) {
   const headers = includeUnit
     ? ["내용", "규격", "단위", "수량", "예상단가", "예상금액"]
     : ["내용", "규격", "수량", "예상단가", "예상금액"];
-  const widths = includeUnit
-    ? [32, 12.5, 6.3, 6.3, 10.4, 10.5]
-    : [32, 12.5, 6.3, 10.4, 10.5];
+  const widths = includeUnit ? [32, 12.5, 6.3, 6.3, 10.4, 10.5] : [32, 12.5, 6.3, 10.4, 10.5];
 
   sheet.columns = widths.map((width) => ({ width: width + WIDTH_PADDING }));
 
@@ -93,12 +76,12 @@ export async function POST(request: Request) {
   const priceCol = includeUnit ? "E" : "D";
   const lastCol = includeUnit ? "F" : "E";
   const colCount = headers.length;
-
   const firstDataRow = 2;
-  for (const item of items) {
+
+  for (const item of rows) {
     const values = includeUnit
-      ? [item.name ?? "", item.spec ?? "", item.unit ?? "", num(item.qty, 1), num(item.unitPrice, 0)]
-      : [item.name ?? "", item.spec ?? "", num(item.qty, 1), num(item.unitPrice, 0)];
+      ? [item.name, item.spec, item.unit, item.qty, item.unitPrice]
+      : [item.name, item.spec, item.qty, item.unitPrice];
 
     const row = sheet.addRow(values);
     row.height = ROW_HEIGHT;
@@ -137,28 +120,12 @@ export async function POST(request: Request) {
   sheet.pageSetup.printTitlesRow = "1:1";
 
   const buffer = await workbook.xlsx.writeBuffer();
-  const base = sanitize(body.title) || "품의_품목내역";
-  const filename = `${base}_${todayStamp()}.xlsx`;
-
-  return new Response(new Uint8Array(buffer as ArrayBuffer), {
-    headers: {
-      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": contentDisposition(filename),
-      "Cache-Control": "no-store",
-    },
+  return new Blob([buffer as ArrayBuffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
 }
 
-function num(value: unknown, fallback: number): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? Math.round(n) : fallback;
-}
-
-function sanitize(title?: string): string {
-  if (!title) return "";
-  return title
-    .replace(/[\\/:*?"<>|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 60);
+/** 표에 보이는 합계와 엑셀의 =SUM 결과가 같은지 확인할 때 씁니다. */
+export function totalForCheck(items: Item[]): number {
+  return items.reduce((sum, it) => sum + amountOf(it), 0);
 }

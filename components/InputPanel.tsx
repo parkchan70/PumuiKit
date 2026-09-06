@@ -13,9 +13,6 @@ type Props = {
   onExtract: () => void;
   onClear: () => void;
   loading: boolean;
-  aiAvailable: boolean | null;
-  useAi: boolean;
-  onUseAiChange: (value: boolean) => void;
 };
 
 export default function InputPanel({
@@ -27,9 +24,6 @@ export default function InputPanel({
   onExtract,
   onClear,
   loading,
-  aiAvailable,
-  useAi,
-  onUseAiChange,
 }: Props) {
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -79,7 +73,7 @@ export default function InputPanel({
       onDrop={handleDrop}
     >
       <header className="mb-3 flex items-baseline justify-between gap-2">
-        <h2 className="text-sm font-bold">1. 붙여넣기 / 올리기</h2>
+        <h2 className="text-sm font-bold">1. 붙여넣기 / 캡쳐 올리기</h2>
         <button
           type="button"
           className="text-xs underline"
@@ -93,7 +87,7 @@ export default function InputPanel({
 
       <p className="mb-2 text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
         장바구니 화면을 <b>Ctrl+A → Ctrl+C</b> 해서 아래에 붙여넣으세요. 캡쳐 이미지는 이 칸에 바로{" "}
-        <b>Ctrl+V</b> 해도 되고, 캡쳐·PDF 파일을 끌어다 놓아도 됩니다.
+        <b>Ctrl+V</b> 해도 되고, 이미지 파일을 끌어다 놓아도 됩니다.
       </p>
 
       <textarea
@@ -112,20 +106,14 @@ export default function InputPanel({
               className="flex items-center gap-2 rounded-lg border px-2 py-1.5 text-xs"
               style={{ borderColor: "var(--line-strong)" }}
             >
-              {att.previewUrl ? (
-                // 로컬 object URL 미리보기 — next/image 최적화 대상이 아닙니다.
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={att.previewUrl}
-                  alt=""
-                  className="h-9 w-9 rounded object-cover"
-                  style={{ border: "1px solid var(--line)" }}
-                />
-              ) : (
-                <span className="grid h-9 w-9 place-items-center rounded bg-red-50 text-[10px] font-bold text-red-600">
-                  PDF
-                </span>
-              )}
+              {/* 로컬 object URL 미리보기 — next/image 최적화 대상이 아닙니다. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={att.previewUrl}
+                alt=""
+                className="h-9 w-9 rounded object-cover"
+                style={{ border: "1px solid var(--line)" }}
+              />
               <span className="max-w-[10rem] truncate">{att.name}</span>
               <span style={{ color: "var(--muted)" }}>{formatBytes(att.bytes)}</span>
               <button
@@ -149,12 +137,12 @@ export default function InputPanel({
           onClick={() => fileInput.current?.click()}
           disabled={loading}
         >
-          캡쳐·PDF 선택
+          캡쳐 이미지 선택
         </button>
         <input
           ref={fileInput}
           type="file"
-          accept="image/*,application/pdf"
+          accept="image/*"
           multiple
           className="hidden"
           onChange={(e) => {
@@ -163,24 +151,6 @@ export default function InputPanel({
             e.target.value = "";
           }}
         />
-
-        <label
-          className="flex items-center gap-1.5 text-xs"
-          style={{ color: aiAvailable === false ? "var(--muted)" : "inherit" }}
-          title={
-            aiAvailable === false
-              ? "ANTHROPIC_API_KEY 가 설정되지 않아 AI 분석을 쓸 수 없습니다."
-              : "캡쳐·PDF는 항상 AI로 읽습니다. 텍스트도 AI로 읽으면 규격·단위까지 더 잘 잡습니다."
-          }
-        >
-          <input
-            type="checkbox"
-            checked={useAi && aiAvailable !== false}
-            disabled={aiAvailable === false || loading}
-            onChange={(e) => onUseAiChange(e.target.checked)}
-          />
-          텍스트도 AI로 분석
-        </label>
 
         <button
           type="button"
@@ -192,10 +162,10 @@ export default function InputPanel({
         </button>
       </div>
 
-      {aiAvailable === false && (
+      {attachments.length > 0 && (
         <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
-          AI 분석이 꺼져 있습니다 (ANTHROPIC_API_KEY 미설정). 텍스트 붙여넣기는 규칙 분석으로 계속
-          쓸 수 있습니다.
+          캡쳐는 브라우저 안에서 글자를 읽습니다. 인터넷으로 보내지 않습니다. 상품명은 오타가 섞일
+          수 있으니 표에서 확인해 주세요.
         </p>
       )}
 

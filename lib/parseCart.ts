@@ -4,19 +4,34 @@ import { toNumber } from "./format";
 /**
  * 규칙 기반 장바구니 파서.
  *
- * API 키 없이도 "붙여넣기 → 표" 가 되도록 하는 오프라인 경로입니다.
+ * 붙여넣은 글과 캡쳐에서 읽은 글(OCR) 모두 여기로 들어옵니다.
  * 완벽할 수 없으므로 결과는 표에서 직접 고치는 것을 전제로 합니다.
  */
 
 const NOISE =
   /^(무료\s*배송|배송비|배송\s*정보|평균\s*배송|합\s*배송|도착\s*예정|오늘출발|내일도착|장바구니|전체\s*선택|선택\s*삭제|삭제|찜하기|공유|더보기|바로\s*구매|구매하기|장바구니\s*담기|옵션\s*변경|쿠폰|적립|포인트|마일리지|리뷰|후기|판매자|브랜드|상품\s*번호|주문\s*금액|총\s*결제|결제\s*예정|할인\s*금액|즉시\s*할인|총\s*상품\s*금액|소계|총\s*합계|합계|총계|배송\s*예정|재입고|품절|수량\s*변경|주문서|안내|카드|무이자)/;
 
-/** "12,000원" · "₩12,000" · "12000 원" */
-const PRICE_G = /(?:₩\s*(\d{1,3}(?:,\d{3})*|\d+)|(\d{1,3}(?:,\d{3})+|\d+)\s*원)/g;
+/**
+ * 캡쳐에서는 줄 아무 데나 이 말이 들어 있으면 그 줄을 통째로 버립니다.
+ * 상품 사진 속 글씨가 오른쪽 정보와 한 줄로 붙어 들어오기 때문에
+ * 줄 첫머리만 보는 NOISE 로는 걸러지지 않습니다.
+ */
+const NOISE_ANYWHERE =
+  /(무료\s*배송|배송비|배송\s*정보|배송\s*예정|발송\s*예정|평균\s*배송|합\s*배송|도착\s*예정|적립\s*혜택|적립금|포인트|마일리지|학교\s*예산|(?:후기|리뷰)\s*\d+\s*건|총\s*결제|결제\s*예정|총\s*상품\s*금액|주문\s*금액|상품\s*번호|판매자|무이자|관심\s*상품|장바구니\s*담기)/;
+
+/**
+ * "12,000원" · "₩12,000" · "12000 원", 그리고 천 단위 쉼표가 있는 숫자.
+ *
+ * OCR은 "원"을 8 · 2! · e# 처럼 자주 잘못 읽습니다. 그래서 세 번째 갈래로
+ * 쉼표로 끊어진 숫자를 가격으로 받아 줍니다. 다만 "1,000ml" · "1,000개"처럼
+ * 단위가 붙은 것은 가격이 아니므로 걸러냅니다.
+ */
+const PRICE_G =
+  /(?:₩\s*(\d{1,3}(?:,\d{3})*|\d+)|(\d{1,3}(?:,\d{3})+|\d+)\s*원|(\d{1,3}(?:,\d{3})+)(?!\s*(?:ml|mL|g|kg|cc|mm|cm|km|매|장|권|개|세트|셋트|박스|팩)))/g;
 
 const QTY_LABELLED = /(?:수량|주문\s*수량|구매\s*수량|주문량)\s*[:：]?\s*(\d{1,4})/;
 const QTY_UNIT =
-  /(\d{1,4})\s*(개|EA|ea|Ea|세트|셋트|박스|팩|권|매|장|병|캔|통|봉|자루|다스|묶음|롤|벌|족|쌍|대|台)(?![가-힣])/;
+  /(\d{1,4})\s*(개|EA|ea|Ea|세트|셋트|박스|팩|권|매|장|병|캔|통|봉|자루|다스|묶음|롤|벌|족|쌍|대)(?![가-힣])/;
 const QTY_MULT = /[x×X]\s*(\d{1,4})\b/;
 
 const OPTION_LINE =
@@ -30,6 +45,28 @@ const QTY_ONLY =
 function isMeta(line: string): boolean {
   return OPTION_LINE.test(line) || QTY_LABELLED.test(line) || QTY_ONLY.test(line.replace(/\s+/g, ""));
 }
+
+/**
+ * 캡쳐의 상품 사진에서 나온 의미 없는 글자 조각인지 봅니다.
+ * ("h > Co", "Hi 그", "aa", "4 Nee" 같은 것들)
+ */
+function isGarbage(line: string): boolean {
+  const compact = line.replace(/\s+/g, "");
+  if (compact.length < 2) return true;
+  const meaningful = (compact.match(/[가-힣0-9A-Za-z]/g) ?? []).length;
+  if (meaningful < compact.length * 0.6) return true;
+  const hangul = (compact.match(/[가-힣]/g) ?? []).length;
+  if (hangul >= 2) return false;
+  // 한글이 거의 없다면 알파벳 단어라도 뚜렷해야 글자로 인정합니다.
+  return !/[A-Za-z]{4,}/.test(compact);
+}
+
+/**
+ * 캡쳐는 왼쪽 사진과 오른쪽 정보가 한 줄로 붙어 나옵니다.
+ * 칸 사이는 공백이 아주 넓게 벌어지므로 그 지점에서 잘라 줍니다.
+ * (같은 줄 안의 "배송비    3,000원" 같은 좁은 간격은 그대로 둡니다.)
+ */
+const COLUMN_GAP = /\s{8,}/;
 
 const HEADER_MAP: Array<[keyof ColumnMap, RegExp]> = [
   ["name", /^(내용|상품\s*명|품\s*명|품목|제품\s*명|물품\s*명|도서\s*명|상품|물품|명칭)$/],
@@ -51,23 +88,53 @@ type ColumnMap = {
 
 export type ParseResult = { items: ExtractedItem[]; warnings: string[] };
 
-export function parseCartText(raw: string): ParseResult {
+export type ParseOptions = {
+  /** 캡쳐를 OCR로 읽은 글이면 켭니다. 잡음 제거를 훨씬 세게 겁니다. */
+  ocr?: boolean;
+};
+
+export function parseCartText(raw: string, options: ParseOptions = {}): ParseResult {
   const text = raw
     .replace(/\r\n?/g, "\n")
-    .replace(/ /g, " ")
+    .replace(/ /g, " ")  // 줄바꿈 없는 공백(NBSP)
     .replace(/[ \t]+$/gm, "");
 
-  const lines = text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
+  let lines = text.split("\n");
 
-  if (lines.length === 0) return { items: [], warnings: ["붙여넣은 내용이 없습니다."] };
+  if (options.ocr) {
+    lines = lines
+      // 잡음 판정은 반드시 자르기 "전에" 합니다. "배송비        3,000원" 처럼
+      // 라벨과 금액 사이가 넓게 벌어지면, 먼저 자를 경우 금액만 남아 품목으로 새어 들어옵니다.
+      .filter((line) => !NOISE_ANYWHERE.test(line))
+      // 그다음 사진 칸과 정보 칸을 가르고, 남은 글자 조각을 버립니다.
+      .flatMap((line) => line.split(COLUMN_GAP))
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0)
+      .filter((l) => pricesIn(l).length > 0 || !isGarbage(l));
+  } else {
+    lines = lines.map((l) => l.trim()).filter((l) => l.length > 0);
+  }
 
-  const table = tryTable(lines);
-  if (table) return table;
+  if (lines.length === 0) {
+    return {
+      items: [],
+      warnings: [options.ocr ? "캡쳐에서 글자를 찾지 못했습니다." : "붙여넣은 내용이 없습니다."],
+    };
+  }
 
-  return parseLoose(lines);
+  // 캡쳐 결과는 칸이 반듯하지 않아 표로 보지 않습니다.
+  if (!options.ocr) {
+    const table = tryTable(lines);
+    if (table) return table;
+  }
+
+  const result = parseLoose(lines);
+  if (options.ocr && result.items.length > 0) {
+    result.warnings.push(
+      "캡쳐에서 읽은 값입니다. 상품명과 가격에 오타가 섞일 수 있으니 표에서 확인해 주세요.",
+    );
+  }
+  return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -201,7 +268,7 @@ function mode(nums: number[]): number {
 }
 
 /* ------------------------------------------------------------------ */
-/* 줄글 형태 (쇼핑몰 장바구니 화면 복사)                                 */
+/* 줄글 형태 (쇼핑몰 장바구니 화면 복사 · 캡쳐 인식 결과)                 */
 /* ------------------------------------------------------------------ */
 
 function parseLoose(lines: string[]): ParseResult {
@@ -241,7 +308,7 @@ function parseLoose(lines: string[]): ParseResult {
 
   if (items.length === 0) {
     warnings.push(
-      "품목을 찾지 못했습니다. 상품명과 가격이 함께 보이도록 복사했는지 확인하거나, 캡쳐 이미지를 올려 AI 분석을 사용해 보세요.",
+      "품목을 찾지 못했습니다. 상품명과 가격이 함께 보이도록 복사하거나 캡쳐했는지 확인해 주세요.",
     );
   }
   return { items, warnings };
@@ -322,8 +389,8 @@ function pickUnitPrice(prices: number[], qty: number): number {
     }
   }
   if (uniq.length >= 2) {
-    const [first, ...rest] = uniq;
-    const last = rest[rest.length - 1];
+    const first = uniq[0];
+    const last = uniq[uniq.length - 1];
     // 12,000원 → 10,000원 처럼 정가가 먼저 나온 경우 할인가 채택
     if (last < first) return last;
   }
@@ -335,7 +402,7 @@ function pricesIn(line: string): number[] {
   PRICE_G.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = PRICE_G.exec(line)) !== null) {
-    const raw = m[1] ?? m[2];
+    const raw = m[1] ?? m[2] ?? m[3];
     if (!raw) continue;
     const n = toNumber(raw);
     // 상품번호·후기 수 같은 값이 섞이지 않도록 최소한의 하한을 둡니다.
