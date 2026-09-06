@@ -1,0 +1,134 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f4f5f7;
+  --panel: #ffffff;
+  --ink: #17191c;
+  --muted: #6b7280;
+  --line: #e3e5e9;
+  --line-strong: #cfd3da;
+  --accent: #1f6feb;
+  --accent-soft: #e8f0fe;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --panel: #1c1f24;
+    --ink: #e9eaec;
+    --muted: #9aa1ab;
+    --line: #2b2f36;
+    --line-strong: #3a3f47;
+    --accent: #6aa1ff;
+    --accent-soft: #1e2a3d;
+  }
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family:
+    "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "맑은 고딕", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.field {
+  background: transparent;
+  color: inherit;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.875rem;
+  width: 100%;
+}
+.field:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  padding: 0.45rem 0.85rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+
+/* 표 안의 입력칸은 셀처럼 보이게 */
+.cell-input {
+  width: 100%;
+  background: transparent;
+  color: inherit;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.8125rem;
+}
+.cell-input:hover {
+  border-color: var(--line);
+}
+.cell-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--panel);
+}
+
+table.sheet {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+}
+table.sheet th,
+table.sheet td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.15rem 0.25rem;
+}
+table.sheet thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line-strong);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  padding: 0.5rem 0.4rem;
+  text-align: center;
+  white-space: nowrap;
+}

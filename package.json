@@ -1,0 +1,27 @@
+{
+  "name": "pumui-kit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "장바구니 캡쳐·PDF·텍스트에서 품목을 뽑아 품의서식 엑셀/CSV로 만들어주는 도구",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
+    "exceljs": "^4.4.0",
+    "next": "^16.3.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.13",
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "tailwindcss": "^4.1.13",
+    "typescript": "^5.8.3"
+  }
+}
