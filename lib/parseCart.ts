@@ -35,15 +35,16 @@ const PRICE_G =
  *  상품명 자리를 빼앗기 때문에, 줄 첫머리만 보는 NOISE 로는 부족합니다.)
  */
 const PROMO =
-  /(쿠폰|빅\s*세일|결제\s*할인|즉시\s*할인|추가\s*할인|카드\s*할인|적립|도착\s*보장|배송\s*보장|스타\s*배송|로켓\s*배송|무료\s*배송|배송비|저렴해졌|가격\s*인하|구매하세요|적용해보세요|담아보세요|품절|재입고|와우\s*회원|한정\s*수량|남았어요)/;
+  /(쿠폰|빅\s*세일|결제\s*할인|즉시\s*할인|추가\s*할인|카드\s*할인|적립|도착\s*보장|배송\s*보장|스타\s*배송|로켓\s*배송|무료\s*배송|배송비|저렴해졌|가격\s*인하|구매하세요|적용해보세요|담아보세요|품절|재입고|와우\s*회원|한정\s*수량|남았어요|상품\s*이미지|대표\s*이미지|이미지\s*없음|배너)/;
 
 const QTY_LABELLED = /(?:수량|주문\s*수량|구매\s*수량|주문량)\s*[:：]?\s*(\d{1,4})/;
 
 /** 가격 옆에 붙는 "× 3" — "10,000원 x 3개" */
 const QTY_MULT = /[x×X]\s*(\d{1,4})\b/;
 
+// "색상 | 순향 용기 1개 + 리필 3개" 처럼 막대(|)로 구분되는 장바구니도 받습니다.
 const OPTION_LINE =
-  /^(\[?옵션\]?|옵션명|선택\s*옵션|색상|컬러|사이즈|규격|종류|타입|수량선택|구성)\s*[:：]?\s*(.+)$/;
+  /^(\[?옵션\]?|옵션명|선택\s*옵션|선택\s*정보|색상|컬러|사이즈|규격|종류|타입|수량선택|구성)\s*[:：|｜]?\s*(.+)$/;
 
 const QTY_UNITS = "개|EA|ea|Ea|세트|셋트|박스|팩|권|매|장|병|캔|통|봉|자루|다스|묶음|롤|벌|족|쌍|대";
 
@@ -173,7 +174,10 @@ function tryTable(lines: string[]): ParseResult | null {
     [/\s*\|\s*/, 2],
   ] as Array<[RegExp, number]>) {
     const hit = lines.filter((l) => delim.test(l)).length;
-    if (hit >= minRows) {
+    // 구분자가 대부분의 줄에 있어야 표로 봅니다.
+    // 장바구니에도 "색상 | 순향 용기 1개" 같은 줄이 한둘 섞이는데,
+    // 그걸 표로 오인하면 장바구니 전체가 엉망이 됩니다.
+    if (hit >= minRows && hit >= lines.length * 0.6) {
       const rows = lines
         .map((l) => l.split(delim).map((c) => c.trim()))
         .filter((cells) => cells.filter(Boolean).length >= 2);
@@ -328,7 +332,7 @@ function parseLoose(lines: string[]): ParseResult {
 
   const items: ExtractedItem[] = [];
   for (const block of blocks) {
-    const item = blockToItem(block);
+    const item = blockToItem(block, warnings);
     if (item) items.push(item);
   }
 
@@ -340,7 +344,7 @@ function parseLoose(lines: string[]): ParseResult {
   return { items, warnings };
 }
 
-function blockToItem(block: string[]): ExtractedItem | null {
+function blockToItem(block: string[], warnings: string[]): ExtractedItem | null {
   const prices: number[] = [];
   const nameCandidates: string[] = [];
   const specParts: string[] = [];
@@ -383,7 +387,9 @@ function blockToItem(block: string[]): ExtractedItem | null {
   if (!name) return null;
 
   const qty = labelledQty || multQty || steppedQty || 1;
-  const unitPrice = pickUnitPrice(prices, qty);
+  // 장바구니 수량 칸에서 수량을 읽었다면, 화면의 금액은 그 줄의 "합계"입니다.
+  const priceIsLineTotal = !labelledQty && !multQty && steppedQty > 1;
+  const unitPrice = pickUnitPrice(prices, qty, priceIsLineTotal, name, warnings);
   if (!unitPrice) return null;
 
   return {
@@ -406,10 +412,20 @@ function pickName(candidates: string[]): string {
 
 /**
  * 정가/할인가/합계가 뒤섞여 있을 때 단가를 고릅니다.
- *  - a * qty === b 인 짝이 있으면 a 가 단가
- *  - 그 외에는 마지막(=대개 할인 적용가) 값을 단가로 봅니다.
+ *
+ *  1. 단가와 합계가 함께 보이면 (단가 × 수량 = 합계) 짝을 찾아 단가를 씁니다.
+ *  2. 남은 값 중 마지막 것을 고릅니다. 정가가 먼저 나오고 할인가가 뒤에 오므로
+ *     대개 실제 결제가입니다.
+ *  3. `lineTotal` 이면 그 값은 단가가 아니라 그 줄의 합계이므로 수량으로 나눕니다.
+ *     장바구니는 "− 4 +" 옆에 4개 합계(70,400원)를 보여 주지 단가를 보여 주지 않습니다.
  */
-function pickUnitPrice(prices: number[], qty: number): number {
+function pickUnitPrice(
+  prices: number[],
+  qty: number,
+  lineTotal: boolean,
+  name: string,
+  warnings: string[],
+): number {
   const uniq = [...new Set(prices.filter((p) => p > 0))];
   if (uniq.length === 0) return 0;
 
@@ -418,13 +434,17 @@ function pickUnitPrice(prices: number[], qty: number): number {
       if (uniq.some((b) => b !== a && Math.abs(a * qty - b) <= 1)) return a;
     }
   }
-  if (uniq.length >= 2) {
-    const first = uniq[0];
-    const last = uniq[uniq.length - 1];
-    // 12,000원 → 10,000원 처럼 정가가 먼저 나온 경우 할인가 채택
-    if (last < first) return last;
+
+  const picked = uniq[uniq.length - 1];
+  if (!lineTotal || qty <= 1) return picked;
+
+  const unit = Math.round(picked / qty);
+  if (unit * qty !== picked) {
+    warnings.push(
+      `${name.slice(0, 20)}…: 장바구니 금액 ${picked.toLocaleString("ko-KR")}원이 수량 ${qty}개로 딱 나누어떨어지지 않아 단가를 ${unit.toLocaleString("ko-KR")}원으로 반올림했습니다. 금액을 확인해 주세요.`,
+    );
   }
-  return uniq[uniq.length - 1];
+  return unit;
 }
 
 function pricesIn(line: string): number[] {
