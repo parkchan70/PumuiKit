@@ -84,15 +84,49 @@ function shippingFeeIn(line: string): number | null {
 
 /**
  * "배송비 3,000원" · "무료배송" 처럼 배송비만 적힌 줄을 표시로 바꿉니다.
+ *
+ * 라벨과 금액이 **다른 줄**로 떨어져 있는 장바구니도 있습니다.
+ *
+ *     배송비
+ *     3,000원
+ *
+ * 이때 라벨만 걷어내면 남은 "3,000원" 이 그 품목의 가격으로 새어 들어가
+ * 단가가 통째로 뒤바뀝니다. 그래서 라벨에 금액이 없으면 **다음 줄**까지 봅니다.
+ *
  * 캡쳐에서 "배송비        3,000원" 처럼 칸이 벌어져 있어도, 칸을 가르기 **전에**
  * 여기서 잡으므로 라벨과 금액이 갈라질 일이 없습니다.
  * ("배송비 3만원 이상 무료" 같은 안내는 금액을 못 읽지만 품목도 아니므로 무료로 둡니다.)
  */
-function toShipMark(line: string): string | null {
-  const t = line.replace(/\s+/g, " ").trim();
-  if (FREE_SHIPPING.test(t)) return shipMark(0);
-  if (!SHIPPING_LABEL.test(t)) return null;
-  return shipMark(shippingFeeIn(t) ?? 0);
+function markShipping(lines: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].replace(/\s+/g, " ").trim();
+    if (FREE_SHIPPING.test(t)) {
+      out.push(shipMark(0));
+      continue;
+    }
+    if (!SHIPPING_LABEL.test(t)) {
+      out.push(lines[i]);
+      continue;
+    }
+    const fee = shippingFeeIn(t);
+    if (fee !== null) {
+      out.push(shipMark(fee));
+      continue;
+    }
+    // 라벨만 있는 줄 — 바로 다음 줄이 금액뿐이면 그게 배송비입니다.
+    const next = (lines[i + 1] ?? "").replace(/\s+/g, " ").trim();
+    if (PRICE_ONLY.test(next)) {
+      out.push(shipMark(pricesIn(next)[0] ?? 0));
+      i++;
+    } else if (/^(무료|무료\s*배송|없음)$/.test(next)) {
+      out.push(shipMark(0));
+      i++;
+    } else {
+      out.push(shipMark(0));
+    }
+  }
+  return out;
 }
 
 /**
@@ -102,9 +136,21 @@ function toShipMark(line: string): string | null {
 const SUMMARY_LABEL =
   /(상품\s*금액|할인\s*금액|주문\s*금액|결제\s*금액|총\s*금액|배송비|배송\s*금액|소\s*계|합\s*계|총\s*계|담은\s*장바구니|적립)/;
 
-/** 요약 칸이 시작되는 줄 */
-const SUMMARY_START =
-  /(상품\s*금액|주문\s*금액|결제\s*금액|총\s*금액|담은\s*장바구니|상품\s*소\s*계)/;
+/**
+ * 요약 칸이라고 **확신**할 수 있는 라벨.
+ *
+ * `상품금액` 하나만으로는 부족합니다. 장바구니에 따라 품목마다
+ * "상품 금액 :33,100원상품 삭제" 처럼 값 앞에 이 말을 붙이기 때문입니다.
+ * 이걸 요약 칸으로 오해하면 그 품목의 **가격이 통째로 사라집니다.**
+ */
+const SUMMARY_STRONG =
+  /(주문\s*금액|결제\s*금액|결제\s*예정|담은\s*장바구니|소\s*계|총\s*상품\s*금액|합\s*계)/;
+
+/**
+ * 요약 칸이 아니라 품목 줄임을 알려 주는 표시.
+ * 품목 줄에는 삭제·찜하기 같은 단추 글자가 값과 한 줄로 붙어 나옵니다.
+ */
+const ITEM_ROW_HINT = /(삭제|찜하기|관심\s*상품|옵션\s*변경|바로\s*구매|주문하기)/;
 
 /**
  * −, +, = 아이콘에 붙은 대체 텍스트.
@@ -115,6 +161,7 @@ const SYMBOL_WORDS = /(빼기|더하기|같음|곱하기|나누기|플러스|마
 
 function isSummaryLine(line: string): boolean {
   if (shipFeeOf(line) !== null) return true;
+  if (ITEM_ROW_HINT.test(line)) return false;
   const t = line
     .replace(SYMBOL_WORDS, " ")
     .replace(/[−–—+=×]/g, " ")
@@ -140,16 +187,26 @@ function isSummaryLine(line: string): boolean {
 function stripSummary(lines: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (!SUMMARY_START.test(lines[i]) || !isSummaryLine(lines[i])) {
+    // 덩어리는 라벨이 있는 줄에서만 시작합니다. 금액만 적힌 줄은 품목의 가격일 수
+    // 있으므로 덩어리를 열지 못합니다.
+    if (!SUMMARY_LABEL.test(lines[i]) || !isSummaryLine(lines[i])) {
       out.push(lines[i]);
       continue;
     }
-    let fee = 0;
     let j = i;
+    let fee = 0;
+    let strong = false;
     while (j < lines.length && isSummaryLine(lines[j])) {
       const marked = shipFeeOf(lines[j]) ?? shippingFeeIn(lines[j]);
       if (marked !== null) fee = Math.max(fee, marked);
+      if (SUMMARY_STRONG.test(lines[j])) strong = true;
       j++;
+    }
+    // 확실한 라벨이 하나도 없으면 요약 칸이 아닙니다. 품목의 가격일 수 있으므로
+    // 손대지 않고 그대로 둡니다.
+    if (!strong) {
+      out.push(lines[i]);
+      continue;
     }
     if (fee > 0) out.push(shipMark(fee));
     i = j - 1;
@@ -247,12 +304,13 @@ export function parseCartText(raw: string, options: ParseOptions = {}): ParseRes
     .replace(/ /g, " ")  // 줄바꿈 없는 공백(NBSP)
     .replace(/[ \t]+$/gm, "");
 
-  // 주문 요약 칸을 가장 먼저 걷어냅니다. 여기에는 상품명처럼 생긴 라벨과
-  // 기호의 대체 텍스트가 섞여 있어, 뒤로 미루면 품목 행으로 굳어 버립니다.
-  let lines = stripSummary(text.split("\n"));
-  // 배송비는 버리지 않고 표시로 바꿔 자리를 지켜 둡니다. 칸을 가르기 전에 잡아야
+  // 배송비를 먼저 표시로 바꿔 자리를 지켜 둡니다. 버리지 않고 남겨야 나중에
+  // 품목 아래 행으로 되살릴 수 있고, 칸을 가르기 전에 잡아야
   // "배송비        3,000원" 의 라벨과 금액이 갈라지지 않습니다.
-  lines = lines.map((line) => toShipMark(line) ?? line);
+  let lines = markShipping(text.split("\n"));
+  // 그다음 주문 요약 칸을 걷어냅니다. 여기에는 상품명처럼 생긴 라벨과
+  // 기호의 대체 텍스트가 섞여 있어, 뒤로 미루면 품목 행으로 굳어 버립니다.
+  lines = stripSummary(lines);
   // 광고 문구는 붙여넣기·캡쳐 어느 쪽이든 걷어냅니다.
   lines = lines.filter((line) => shipFeeOf(line) !== null || !PROMO.test(line));
 
