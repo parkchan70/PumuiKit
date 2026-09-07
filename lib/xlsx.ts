@@ -1,105 +1,63 @@
-import type ExcelJSType from "exceljs";
 import type { Item } from "./types";
 
 /**
- * 사용자가 준 "품의서식참고.xls" 를 그대로 재현합니다. 전부 브라우저에서 만듭니다.
- *   A 내용(32) / B 규격(12.5) / C 수량(6.3) / D 예상단가(10.4) / E 예상금액(10.5)
- *   머리글 굴림 9pt · 회색(C0C0C0) 채움, 본문 굴림 10pt, 전 셀 가운데 정렬 · 실선 테두리
- *   행 높이 17.4pt, 예상금액은 =수량*단가 수식, A4 세로 (여백 0.7" / 0.75")
+ * 업로드 서식 그대로 `.xls` 를 만듭니다. 전부 브라우저에서 만듭니다.
+ *
+ * 학교 시스템에 올릴 수 있어야 하므로 **형식을 마음대로 바꾸면 안 됩니다.**
+ * 받은 서식 파일(품목내역.xls)을 뜯어 확인한 구조입니다.
+ *
+ *   - 진짜 엑셀 97~2003 파일(BIFF8). `.xlsx` 는 업로드가 되지 않습니다.
+ *   - 시트 이름 `품목내역`
+ *   - 첫 줄은 머리글 `내용 / 규격 / 단위 / 수량 / 예상단가` 5열
+ *   - 열 너비는 다섯 열 모두 14.06자
+ *
+ * 서식에 **예상금액 열은 없습니다.** 수량 × 단가는 올린 뒤 시스템이 계산합니다.
+ * 합계 행도 넣지 않습니다. (화면 표에는 둘 다 그대로 보입니다.)
  */
 
-const FONT_BODY = { name: "굴림", size: 10 } as const;
-const FONT_HEAD = { name: "굴림", size: 9 } as const;
-const THIN: Partial<ExcelJSType.Borders> = {
-  top: { style: "thin" },
-  left: { style: "thin" },
-  bottom: { style: "thin" },
-  right: { style: "thin" },
-};
-const CENTER: Partial<ExcelJSType.Alignment> = { horizontal: "center", vertical: "middle" };
-const ROW_HEIGHT = 17.4;
+export const SHEET_NAME = "품목내역";
+export const HEADERS = ["내용", "규격", "단위", "수량", "예상단가"] as const;
 
-/**
- * 엑셀은 열 너비 속성값에서 좌우 여백(약 0.7자)을 뺀 값을 화면에 보여줍니다.
- * 참고 서식과 눈에 보이는 너비를 맞추려면 그만큼 더해서 써야 합니다.
- */
-const WIDTH_PADDING = 0.69921875;
+/** 서식의 열 너비 — 다섯 열 모두 같습니다. */
+const COLUMN_WIDTH = 14.06;
 
-export type XlsxOptions = {
-  /** 참고 서식에 없는 "단위" 열을 함께 내보낼지 */
-  includeUnit?: boolean;
-};
-
-export async function buildXlsx(items: Item[], options: XlsxOptions = {}): Promise<Blob> {
+export async function buildXls(items: Item[]): Promise<Blob> {
   const rows = items.filter((it) => it.name.trim().length > 0);
   if (rows.length === 0) throw new Error("내보낼 품목이 없습니다.");
 
-  const includeUnit = Boolean(options.includeUnit);
+  const XLSX = await import("xlsx");
 
-  const ExcelJS = (await import("exceljs")).default;
+  const sheet = XLSX.utils.aoa_to_sheet([
+    [...HEADERS],
+    ...rows.map((it) => [it.name.trim(), it.spec.trim(), it.unit.trim(), it.qty, it.unitPrice]),
+  ]);
+  sheet["!cols"] = HEADERS.map(() => ({ wch: COLUMN_WIDTH }));
 
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "PumuiKit";
-  workbook.created = new Date();
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, sheet, SHEET_NAME);
 
-  const sheet = workbook.addWorksheet("품의", {
-    properties: { defaultRowHeight: ROW_HEIGHT, dyDescent: 0.4 },
-    // <sheetViews> 가 없으면 엑셀이 행 높이(ht)를 통째로 무시합니다. 반드시 남겨 두세요.
-    views: [{ state: "normal", showGridLines: true }],
-    pageSetup: {
-      paperSize: 9, // A4
-      orientation: "portrait",
-      margins: { left: 0.7, right: 0.7, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 },
-    },
-  });
+  const raw = XLSX.write(book, { bookType: "biff8", type: "array" }) as ArrayBuffer;
+  return new Blob([repack(XLSX, raw)], { type: "application/vnd.ms-excel" });
+}
 
-  const headers = includeUnit
-    ? ["내용", "규격", "단위", "수량", "예상단가", "예상금액"]
-    : ["내용", "규격", "수량", "예상단가", "예상금액"];
-  const widths = includeUnit ? [32, 12.5, 6.3, 6.3, 10.4, 10.5] : [32, 12.5, 6.3, 10.4, 10.5];
+/**
+ * `.xls` 는 하나의 덩어리가 아니라 안에 폴더가 든 상자(OLE 복합 문서)이고,
+ * 그 뿌리 폴더의 이름은 관례상 `Root Entry` 입니다. 서식 원본도 그렇습니다.
+ *
+ * 그런데 만들어 주는 라이브러리는 뿌리를 `R` 이라고 적습니다. 요즘 프로그램은
+ * 신경 쓰지 않지만, 오래된 업로드 시스템 중에는 `Root Entry` 라는 이름으로 찾는
+ * 것이 있습니다. 그래서 표(Workbook)만 꺼내 상자를 다시 쌉니다.
+ *
+ * 라이브러리가 자기 표시용 스트림(`\x01Sh33tJ5`)을 하나 더 넣는데 이건 지워도
+ * 저장할 때 다시 붙습니다. 엑셀이 만든 파일에도 이런 부속 스트림이 여럿 들어가고
+ * 읽는 쪽은 표만 보므로 그대로 둡니다.
+ */
+function repack(XLSX: typeof import("xlsx"), raw: ArrayBuffer): ArrayBuffer {
+  const CFB = XLSX.CFB;
+  const workbook = CFB.find(CFB.read(new Uint8Array(raw), { type: "array" }), "/Workbook");
+  if (!workbook) return raw;
 
-  sheet.columns = widths.map((width) => ({ width: width + WIDTH_PADDING }));
-
-  const headerRow = sheet.addRow(headers);
-  headerRow.height = ROW_HEIGHT;
-  headerRow.eachCell((cell) => {
-    cell.font = { ...FONT_HEAD };
-    cell.alignment = { ...CENTER };
-    cell.border = { ...THIN };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFC0C0C0" } };
-  });
-
-  const qtyCol = includeUnit ? "D" : "C";
-  const priceCol = includeUnit ? "E" : "D";
-  const colCount = headers.length;
-
-  for (const item of rows) {
-    const values = includeUnit
-      ? [item.name, item.spec, item.unit, item.qty, item.unitPrice]
-      : [item.name, item.spec, item.qty, item.unitPrice];
-
-    const row = sheet.addRow(values);
-    row.height = ROW_HEIGHT;
-    row.getCell(colCount).value = {
-      formula: `${qtyCol}${row.number}*${priceCol}${row.number}`,
-      date1904: false,
-    };
-    for (let c = 1; c <= colCount; c++) {
-      const cell = row.getCell(c);
-      cell.font = { ...FONT_BODY };
-      cell.alignment = { ...CENTER };
-      cell.border = { ...THIN };
-    }
-  }
-
-  // 합계 행은 넣지 않습니다. 참고 서식에도 없고, 품의서 본문에서 따로 잡는 값입니다.
-  // (화면 표에는 그대로 보입니다.)
-
-  // 머리글은 인쇄할 때마다 반복
-  sheet.pageSetup.printTitlesRow = "1:1";
-
-  const buffer = await workbook.xlsx.writeBuffer();
-  return new Blob([buffer as ArrayBuffer], {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  });
+  const box = CFB.utils.cfb_new({ root: "Root Entry" });
+  CFB.utils.cfb_add(box, "/Workbook", workbook.content);
+  return CFB.write(box, { type: "array" }) as ArrayBuffer;
 }
