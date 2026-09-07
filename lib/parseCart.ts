@@ -436,7 +436,7 @@ function rowsToItems(rows: string[][], requireHeader: boolean): ParseResult | nu
 
     items.push({
       name: name.replace(/\s+/g, " ").trim(),
-      spec: pick(map.spec).trim(),
+      spec: "", // 규격은 뽑지 않습니다 (blockToItem 의 주석 참고)
       unit: pick(map.unit).trim(),
       qty,
       unitPrice,
@@ -569,7 +569,6 @@ function parseLoose(lines: string[]): ParseResult {
 function blockToItem(block: string[], warnings: string[]): ExtractedItem | null {
   const prices: number[] = [];
   const nameCandidates: string[] = [];
-  const specParts: string[] = [];
 
   // 수량은 출처에 따라 믿음의 정도가 다릅니다. 아래 순서로 채택합니다.
   let labelledQty = 0; // "수량 3개"
@@ -580,11 +579,9 @@ function blockToItem(block: string[], warnings: string[]): ExtractedItem | null 
     const found = pricesIn(line);
     prices.push(...found);
 
-    const opt = line.match(OPTION_LINE);
-    if (opt) {
-      specParts.push(opt[2].trim());
-      continue;
-    }
+    // 옵션 줄은 상품명이 아니라는 것만 확인하고 넘깁니다.
+    // (규격은 뽑지 않습니다 — 아래 spec 주석 참고)
+    if (OPTION_LINE.test(line)) continue;
 
     const labelled = line.match(QTY_LABELLED);
     if (labelled) {
@@ -616,7 +613,9 @@ function blockToItem(block: string[], warnings: string[]): ExtractedItem | null 
 
   return {
     name,
-    spec: specParts.join(" / ").slice(0, 60),
+    // 규격은 일부러 비워 둡니다. 장바구니의 옵션 글은 상품명과 겹치거나 지저분해서
+    // 품의서에 그대로 올릴 만한 값이 못 됩니다. 필요하면 표에서 직접 적습니다.
+    spec: "",
     unit: "",
     qty,
     unitPrice,

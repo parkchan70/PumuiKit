@@ -7,7 +7,7 @@ import { csvToItems, itemsToCsv } from "@/lib/csv";
 import { fileToAttachment, isSupported } from "@/lib/image";
 import { readAttachments, warmUp } from "@/lib/ocr";
 import { parseCartText } from "@/lib/parseCart";
-import { buildXlsx } from "@/lib/xlsx";
+import { buildXls } from "@/lib/xlsx";
 import { comma, todayStamp } from "@/lib/format";
 import {
   emptyItem,
@@ -27,11 +27,9 @@ export default function Page() {
   const [error, setError] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [title, setTitle] = useState("");
-  const [includeUnit, setIncludeUnit] = useState(false);
   const csvInput = useRef<HTMLInputElement>(null);
 
   const total = useMemo(() => totalOf(items), [items]);
-  const hasUnitValues = useMemo(() => items.some((it) => it.unit.trim().length > 0), [items]);
 
   const addFiles = useCallback(async (files: File[]) => {
     setError("");
@@ -134,13 +132,13 @@ export default function Page() {
     triggerDownload(blob, `${baseName()}_${todayStamp()}.csv`);
   };
 
-  const downloadXlsx = async () => {
+  const downloadXls = async () => {
     setError("");
     setLoading(true);
     setBusyLabel("엑셀 파일을 만드는 중…");
     try {
-      const blob = await buildXlsx(items, { includeUnit });
-      triggerDownload(blob, `${baseName()}_${todayStamp()}.xlsx`);
+      const blob = await buildXls(items);
+      triggerDownload(blob, `${baseName()}_${todayStamp()}.xls`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "엑셀 파일을 만들지 못했습니다.");
     } finally {
@@ -267,16 +265,9 @@ export default function Page() {
             className="mt-3 flex flex-wrap items-center gap-3 border-t pt-3"
             style={{ borderColor: "var(--line)" }}
           >
-            <label className="flex items-center gap-1.5 text-xs">
-              <input
-                type="checkbox"
-                checked={includeUnit}
-                onChange={(e) => setIncludeUnit(e.target.checked)}
-              />
-              엑셀에 <b>단위</b> 열 포함
-            </label>
             <span className="text-xs" style={{ color: "var(--muted)" }}>
-              내려받는 파일에는 품목 행만 들어갑니다 (합계 행 없음)
+              엑셀은 업로드 서식 그대로 <b>.xls</b> 로 저장됩니다 —{" "}
+              <b>내용 / 규격 / 단위 / 수량 / 예상단가</b> 5열, 합계 행 없음
             </span>
 
             <div className="ml-auto flex gap-2">
@@ -291,20 +282,12 @@ export default function Page() {
               <button
                 type="button"
                 className="btn btn-primary"
-                onClick={downloadXlsx}
+                onClick={downloadXls}
                 disabled={items.length === 0 || loading}
               >
-                품의서식 엑셀 저장
+                품목내역 엑셀(.xls) 저장
               </button>
             </div>
-
-            {!includeUnit && hasUnitValues && (
-              <p className="w-full text-xs" style={{ color: "var(--muted)" }}>
-                단위 값이 입력되어 있습니다. 참고 서식은 <b>내용/규격/수량/예상단가/예상금액</b> 5열
-                이라 기본값에서는 단위가 빠집니다. 함께 내보내려면 위 체크를 켜세요. (CSV에는 항상
-                들어갑니다.)
-              </p>
-            )}
           </footer>
         </section>
       </div>
