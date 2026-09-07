@@ -37,6 +37,126 @@ const PRICE_G =
 const PROMO =
   /(쿠폰|빅\s*세일|결제\s*할인|즉시\s*할인|추가\s*할인|카드\s*할인|적립|도착\s*보장|배송\s*보장|스타\s*배송|로켓\s*배송|무료\s*배송|배송비|저렴해졌|가격\s*인하|구매하세요|적용해보세요|담아보세요|품절|재입고|와우\s*회원|한정\s*수량|남았어요|상품\s*이미지|대표\s*이미지|이미지\s*없음|배너)/;
 
+/* ------------------------------------------------------------------ */
+/* 배송비 · 주문 요약 칸                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 배송비는 품목이 아니지만 품의서에는 적어야 하는 돈입니다.
+ * 그래서 그냥 지우지 않고 이 표시로 바꿔 둔 뒤, 그 배송비가 딸린 품목
+ * **바로 아래**에 `배송비` 행으로 되살립니다.
+ * (지워 버리면 어느 품목에 붙은 배송비인지 알 수 없게 됩니다.)
+ */
+const SHIP_MARK = "\u0000SHIP:";
+
+function shipMark(fee: number): string {
+  return SHIP_MARK + Math.max(0, Math.round(fee));
+}
+
+/** 배송비 표시면 금액(무료는 0)을, 아니면 null 을 돌려줍니다. */
+function shipFeeOf(line: string): number | null {
+  if (!line.startsWith(SHIP_MARK)) return null;
+  const n = Number(line.slice(SHIP_MARK.length));
+  return Number.isFinite(n) ? n : null;
+}
+
+const FREE_SHIPPING = /^(?:무료\s*배송|배송비\s*무료)$/;
+const SHIPPING_LABEL = /^(?:묶음|합|기본|조건부|추가)?\s*배송비/;
+
+/** 금액만 적힌 줄 — "3,000원" · "₩3,000" · "45,000" */
+const PRICE_ONLY = /^₩?\s*\d{1,3}(?:,\d{3})*\s*원?$/;
+
+/**
+ * 한 줄 안에서 **"배송비" 바로 뒤에 붙은** 금액만 집어냅니다.
+ * 요약 칸은 "상품금액 42,000원 − 할인금액 0원 + 배송비 3,000원 = 주문금액 45,000원"처럼
+ * 한 줄에 금액이 여럿 들어오므로, 줄에서 아무 금액이나 고르면 주문금액을 배송비로
+ * 착각합니다.
+ */
+const SHIPPING_FEE_IN_LINE = /배송비\s*[:：]?\s*(₩?\s*\d{1,3}(?:,\d{3})*\s*원?|무료)/;
+
+function shippingFeeIn(line: string): number | null {
+  const m = line.replace(/\s+/g, " ").match(SHIPPING_FEE_IN_LINE);
+  if (!m) return null;
+  if (m[1] === "무료") return 0;
+  const [fee] = pricesIn(m[1]);
+  return fee ?? 0;
+}
+
+/**
+ * "배송비 3,000원" · "무료배송" 처럼 배송비만 적힌 줄을 표시로 바꿉니다.
+ * 캡쳐에서 "배송비        3,000원" 처럼 칸이 벌어져 있어도, 칸을 가르기 **전에**
+ * 여기서 잡으므로 라벨과 금액이 갈라질 일이 없습니다.
+ * ("배송비 3만원 이상 무료" 같은 안내는 금액을 못 읽지만 품목도 아니므로 무료로 둡니다.)
+ */
+function toShipMark(line: string): string | null {
+  const t = line.replace(/\s+/g, " ").trim();
+  if (FREE_SHIPPING.test(t)) return shipMark(0);
+  if (!SHIPPING_LABEL.test(t)) return null;
+  return shipMark(shippingFeeIn(t) ?? 0);
+}
+
+/**
+ * 판매자별 주문 요약 칸에 나오는 라벨.
+ * ("상품금액 − 할인금액 + 배송비 = 주문금액" 줄)
+ */
+const SUMMARY_LABEL =
+  /(상품\s*금액|할인\s*금액|주문\s*금액|결제\s*금액|총\s*금액|배송비|배송\s*금액|소\s*계|합\s*계|총\s*계|담은\s*장바구니|적립)/;
+
+/** 요약 칸이 시작되는 줄 */
+const SUMMARY_START =
+  /(상품\s*금액|주문\s*금액|결제\s*금액|총\s*금액|담은\s*장바구니|상품\s*소\s*계)/;
+
+/**
+ * −, +, = 아이콘에 붙은 대체 텍스트.
+ * 화면에는 기호로 보이지만 복사하면 글자로 따라오고, 값에 그대로 붙어
+ * "0원더하기"(할인금액 0원 + 배송비) 같은 줄이 만들어집니다.
+ */
+const SYMBOL_WORDS = /(빼기|더하기|같음|곱하기|나누기|플러스|마이너스|이퀄)/g;
+
+function isSummaryLine(line: string): boolean {
+  if (shipFeeOf(line) !== null) return true;
+  const t = line
+    .replace(SYMBOL_WORDS, " ")
+    .replace(/[−–—+=×]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!t) return true;
+  if (SUMMARY_LABEL.test(t)) return true;
+  return PRICE_ONLY.test(t);
+}
+
+/**
+ * 판매자별 주문 요약 칸을 통째로 걷어냅니다.
+ *
+ * 이 칸은 줄 첫머리만 보는 NOISE 로는 걸러지지 않습니다.
+ * "유앤아이i에서 담은 장바구니 상품 소계" 는 상품명처럼 생겼고,
+ * "0원더하기" 는 라벨이 다 떨어져 나가고 값만 남은 조각이라
+ * 그대로 두면 둘 다 품목 행이 되어 버립니다.
+ *
+ * 요약 칸의 배송비는 버리지 않고 표시로 바꿔 그 자리에 남깁니다.
+ * (판매자 칸에 배송비가 따로 적혀 있지 않은 장바구니도 있기 때문입니다.
+ *  두 군데 모두 있으면 같은 블록 안에서 큰 값 하나만 씁니다.)
+ */
+function stripSummary(lines: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!SUMMARY_START.test(lines[i]) || !isSummaryLine(lines[i])) {
+      out.push(lines[i]);
+      continue;
+    }
+    let fee = 0;
+    let j = i;
+    while (j < lines.length && isSummaryLine(lines[j])) {
+      const marked = shipFeeOf(lines[j]) ?? shippingFeeIn(lines[j]);
+      if (marked !== null) fee = Math.max(fee, marked);
+      j++;
+    }
+    if (fee > 0) out.push(shipMark(fee));
+    i = j - 1;
+  }
+  return out;
+}
+
 const QTY_LABELLED = /(?:수량|주문\s*수량|구매\s*수량|주문량)\s*[:：]?\s*(\d{1,4})/;
 
 /** 가격 옆에 붙는 "× 3" — "10,000원 x 3개" */
@@ -57,6 +177,8 @@ const QTY_UNITS = "개|EA|ea|Ea|세트|셋트|박스|팩|권|매|장|병|캔|통
  */
 function quantityOnly(line: string): number | null {
   const compact = line
+    // 화면의 −/+ 단추가 "빼기 10 더하기" 처럼 글자로 복사되는 장바구니가 있습니다.
+    .replace(SYMBOL_WORDS, "")
     .replace(/\s+/g, "")
     .replace(/^[-−–—+]+/, "")
     .replace(/[-−–—+]+$/, "");
@@ -125,24 +247,36 @@ export function parseCartText(raw: string, options: ParseOptions = {}): ParseRes
     .replace(/ /g, " ")  // 줄바꿈 없는 공백(NBSP)
     .replace(/[ \t]+$/gm, "");
 
-  // 광고 문구는 붙여넣기·캡쳐 어느 쪽이든 먼저 걷어냅니다.
-  let lines = text.split("\n").filter((line) => !PROMO.test(line));
+  // 주문 요약 칸을 가장 먼저 걷어냅니다. 여기에는 상품명처럼 생긴 라벨과
+  // 기호의 대체 텍스트가 섞여 있어, 뒤로 미루면 품목 행으로 굳어 버립니다.
+  let lines = stripSummary(text.split("\n"));
+  // 배송비는 버리지 않고 표시로 바꿔 자리를 지켜 둡니다. 칸을 가르기 전에 잡아야
+  // "배송비        3,000원" 의 라벨과 금액이 갈라지지 않습니다.
+  lines = lines.map((line) => toShipMark(line) ?? line);
+  // 광고 문구는 붙여넣기·캡쳐 어느 쪽이든 걷어냅니다.
+  lines = lines.filter((line) => shipFeeOf(line) !== null || !PROMO.test(line));
 
   if (options.ocr) {
     lines = lines
-      // 잡음 판정은 반드시 자르기 "전에" 합니다. "배송비        3,000원" 처럼
-      // 라벨과 금액 사이가 넓게 벌어지면, 먼저 자를 경우 금액만 남아 품목으로 새어 들어옵니다.
-      .filter((line) => !NOISE_ANYWHERE.test(line))
+      // 잡음 판정은 반드시 자르기 "전에" 합니다.
+      .filter((line) => shipFeeOf(line) !== null || !NOISE_ANYWHERE.test(line))
       // 그다음 사진 칸과 정보 칸을 가르고, 남은 글자 조각을 버립니다.
-      .flatMap((line) => line.split(COLUMN_GAP))
+      .flatMap((line) => (shipFeeOf(line) !== null ? [line] : line.split(COLUMN_GAP)))
       .map((l) => l.trim())
       .filter((l) => l.length > 0)
-      .filter((l) => pricesIn(l).length > 0 || !isGarbage(l));
+      .filter(
+        (l) =>
+          shipFeeOf(l) !== null ||
+          pricesIn(l).length > 0 ||
+          // "- 10 +" 같은 수량 칸은 글자가 거의 없어 조각으로 오해받지만 꼭 필요합니다.
+          quantityOnly(l) !== null ||
+          !isGarbage(l),
+      );
   } else {
     lines = lines.map((l) => l.trim()).filter((l) => l.length > 0);
   }
 
-  if (lines.length === 0) {
+  if (lines.every((l) => shipFeeOf(l) !== null)) {
     return {
       items: [],
       warnings: [options.ocr ? "캡쳐에서 글자를 찾지 못했습니다." : "붙여넣은 내용이 없습니다."],
@@ -168,7 +302,9 @@ export function parseCartText(raw: string, options: ParseOptions = {}): ParseRes
 /* 표 형태 (엑셀·웹 표 복사)                                            */
 /* ------------------------------------------------------------------ */
 
-function tryTable(lines: string[]): ParseResult | null {
+function tryTable(all: string[]): ParseResult | null {
+  // 배송비 표시는 표의 칸이 아니므로 표 판정에서 빼 둡니다.
+  const lines = all.filter((l) => shipFeeOf(l) === null);
   for (const [delim, minRows] of [
     [/\t/, 2],
     [/\s*\|\s*/, 2],
@@ -301,21 +437,32 @@ function mode(nums: number[]): number {
 /* 줄글 형태 (쇼핑몰 장바구니 화면 복사 · 캡쳐 인식 결과)                 */
 /* ------------------------------------------------------------------ */
 
+type Block = { lines: string[]; shipping: number };
+
 function parseLoose(lines: string[]): ParseResult {
   const warnings: string[] = [];
-  const blocks: string[][] = [];
+  const blocks: Block[] = [];
   let current: string[] = [];
+  let shipping = 0;
   let hasPrice = false;
   let hasName = false;
 
   const flush = () => {
-    if (current.length) blocks.push(current);
+    if (current.length || shipping > 0) blocks.push({ lines: current, shipping });
     current = [];
+    shipping = 0;
     hasPrice = false;
     hasName = false;
   };
 
   for (const line of lines) {
+    // 배송비는 품목을 끊지 않습니다. 같은 판매자 칸에 두 번(품목 옆 · 요약 칸) 적혀 있어도
+    // 큰 값 하나만 남겨 두 번 더해지지 않게 합니다.
+    const fee = shipFeeOf(line);
+    if (fee !== null) {
+      shipping = Math.max(shipping, fee);
+      continue;
+    }
     if (NOISE.test(line)) continue;
     const priced = pricesIn(line).length > 0;
     // 수량·옵션 줄은 품목을 끊지 않습니다. ("수량 3개" 뒤에 합계가 오는 장바구니가 흔합니다)
@@ -332,8 +479,14 @@ function parseLoose(lines: string[]): ParseResult {
 
   const items: ExtractedItem[] = [];
   for (const block of blocks) {
-    const item = blockToItem(block, warnings);
+    const item = blockToItem(block.lines, warnings);
     if (item) items.push(item);
+    if (block.shipping <= 0) continue;
+    // 배송비는 그 배송비가 딸린 품목 **바로 아래**에 붙입니다.
+    // 품목을 못 읽은 블록(요약 칸만 남은 경우)의 배송비는 바로 앞 품목의 것으로 봅니다.
+    if (item || items.length > 0) {
+      items.push({ name: "배송비", spec: "", unit: "", qty: 1, unitPrice: block.shipping });
+    }
   }
 
   if (items.length === 0) {
