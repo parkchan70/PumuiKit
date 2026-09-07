@@ -115,7 +115,7 @@ function markShipping(lines: string[]): string[] {
       continue;
     }
     // 라벨만 있는 줄 — 바로 다음 줄이 금액뿐이면 그게 배송비입니다.
-    const next = (lines[i + 1] ?? "").replace(/\s+/g, " ").trim();
+    const next = (lines[i + 1] ?? "").replace(SYMBOL_WORDS, "").replace(/\s+/g, " ").trim();
     if (PRICE_ONLY.test(next)) {
       out.push(shipMark(pricesIn(next)[0] ?? 0));
       i++;
@@ -154,10 +154,21 @@ const ITEM_ROW_HINT = /(삭제|찜하기|관심\s*상품|옵션\s*변경|바로\
 
 /**
  * −, +, = 아이콘에 붙은 대체 텍스트.
- * 화면에는 기호로 보이지만 복사하면 글자로 따라오고, 값에 그대로 붙어
- * "0원더하기"(할인금액 0원 + 배송비) 같은 줄이 만들어집니다.
+ * 화면에는 기호로 보이지만 복사하면 글자로 따라오고, 값 뒤에 그대로 붙어
+ * "0원더하기" · "42,000원빼기" · "3,000원계산값은" 같은 줄이 만들어집니다.
  */
-const SYMBOL_WORDS = /(빼기|더하기|같음|곱하기|나누기|플러스|마이너스|이퀄)/g;
+const SYMBOL_WORDS =
+  /(빼기|더하기|곱하기|나누기|계산값은|계산값|결과값은|같음|플러스|마이너스|이퀄)/g;
+
+/**
+ * 금액 바로 뒤에 짧은 한글이 띄어쓰기 없이 붙은 조각 — "3,000원계산값은".
+ *
+ * 위 목록에 없는 대체 텍스트가 새로 나와도 요약 칸의 값으로 알아보기 위한
+ * 그물입니다. 이걸 못 알아보면 요약 칸이 거기서 끊기고, 남은 금액이 앞 품목의
+ * 가격으로 새어 들어가 단가가 뒤바뀝니다.
+ * (띄어쓰기가 있는 "42,000원 상품 삭제" 같은 품목 줄은 걸리지 않습니다.)
+ */
+const PRICE_WITH_TAIL = /^₩?\s*\d{1,3}(?:,\d{3})*\s*원[가-힣]{1,8}$/;
 
 function isSummaryLine(line: string): boolean {
   if (shipFeeOf(line) !== null) return true;
@@ -169,7 +180,7 @@ function isSummaryLine(line: string): boolean {
     .trim();
   if (!t) return true;
   if (SUMMARY_LABEL.test(t)) return true;
-  return PRICE_ONLY.test(t);
+  return PRICE_ONLY.test(t) || PRICE_WITH_TAIL.test(t);
 }
 
 /**
